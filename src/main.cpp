@@ -19,7 +19,7 @@
 VL53L0X g_tof_sensor;
 
 #define FETCH_PERIOD_MICROS 25000 // 1e6 micros / 40 Hz = 25e3 micros
-#define WS_SERVER_PORT 42001
+#define WS_SERVER_PORT 42000
 #define WS_SERVER_HOSTNAME "m5c-tof"
 WebSocketsServer webSocket = WebSocketsServer(WS_SERVER_PORT);
 

@@ -1,0 +1,269 @@
+<!doctype html>
+<html>
+<head>
+<title>M5Stick-C ToF Demo</title>
+<meta charset="utf-8">
+<style>
+canvas {
+  background-color: white; 
+  width: 60%;
+  height: auto;
+}
+.row.content {
+  width: 100%;
+  height: auto;
+  margin: auto;
+}
+</style>
+<link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" integrity="sha384-JcKb8q3iqJ61gNV9KGb8thSsNjpSL0n8PARn9HuZOnIxN0hoP+VmmDGMN5t9UJ0Z" crossorigin="anonymous">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/msgpack5/4.2.0/msgpack5.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/smoothie@1.35.0/smoothie.min.js"></script>
+<script type="text/javascript">
+
+"use strict";
+var connection = null;
+// var clientID = 0;
+var msgpack = msgpack5();
+var label_keys = ["tof"];
+var msgpack_pkts;
+var json_pkts;
+var dtstr;
+var aggObj;
+var aggBuf;
+
+function initDataVars() {
+  msgpack_pkts = [];
+  json_pkts = [];
+  dtstr = datetimeString(new Date())
+  aggObj = { "tof": [], "micros": [] };
+  aggBuf = new Uint8Array([]);
+};
+
+// document.addEventListener("DOMContentLoaded", function () {
+function createCharts(num_charts, chartLabels) {
+  var timeseries = [];
+  var charts = [];
+  var chartContainer = document.getElementById("charts");
+
+  for (var i = 0; i < num_charts; i++) {
+    var ts = new TimeSeries();
+    var chart = new SmoothieChart({
+      responsive: true,
+      interpolation: 'linear',
+      millisPerLine: 100
+    });
+
+    chart.streamTo(document.getElementById("channel_"+i), 1000);
+    chart.addTimeSeries(ts, {
+        strokeStyle:'rgb(255, 255, 255)',
+        lineWidth: 1
+    });
+
+    timeseries.push(ts);
+    charts.push(chart)
+  }
+  return [timeseries, charts];
+} // end function createCharts
+
+function concatTypedArrays(a, b) { // a, b TypedArray of same type
+    var c = new (a.constructor)(a.length + b.length);
+    c.set(a, 0);
+    c.set(b, a.length);
+    return c;
+}
+
+function concatBuffers(a, b) {
+    return concatTypedArrays(
+        new Uint8Array(a.buffer || a), 
+        new Uint8Array(b.buffer || b)
+    ).buffer;
+}
+
+function startStream() {
+  var serverUrl;
+  var scheme = "ws";
+
+  initDataVars();
+
+  // If this is an HTTPS connection, we have to use a secure WebSocket
+  // connection too, so add another "s" to the scheme.
+  if (document.location.protocol === "https:") {
+    scheme += "s";
+  }
+
+  // serverUrl = scheme + "://" + "m5c-imu" + ":42000";
+  serverUrl = scheme + "://" + "m5c-tof" + ":42000";
+
+  connection = new WebSocket(serverUrl);
+  console.log("***CREATED WEBSOCKET");
+
+  connection.onopen = function(evt) {
+    console.log("***ONOPEN");
+  };
+  console.log("***CREATED ONOPEN");
+
+  // initialize label_keys and plots (i.e. timeseries)
+  const _tmp = createCharts(label_keys.length, label_keys);
+  var timeseries = _tmp[0];
+  var charts = _tmp[1];
+  var g_time = new Date().getTime();
+
+  connection.onmessage = function(evt) {
+    console.log("***ONMESSAGE");
+
+    // add msgpack pkt to list
+    msgpack_pkts.push(evt.data);
+
+    // create local var to work with JSON object
+    var obj;
+
+    // process websocket buffer and msgpack object
+    evt.data.arrayBuffer().then(function(data) {
+      // console.log(aggBuf.byteLength)
+      // console.log(data.byteLength)
+      aggBuf = concatBuffers(aggBuf, data)
+
+      // decode MsgPack object from arrayBuffer in to JSON object
+      obj = msgpack.decode(data);
+
+      // add to msgpack pkt to list
+      json_pkts.push(obj);
+
+      // add elements to each list of aggregated objects
+      Object.keys(obj).forEach(function(k, i){
+        aggObj[k].push(...obj[k]);
+      });
+
+      // loop through label_keys and plots
+      label_keys.forEach(function(label_key, label_key_ix) {
+        var loc_time = g_time;
+        obj[label_key].forEach(function(val, val_ix) {
+          // update local time and convert micros to millis
+          loc_time += (obj["micros"][val_ix] / 1e3);
+          timeseries[label_key_ix].append(Math.round(loc_time) , val);
+        }); // end foreach plot/graph
+
+        // if last label, then update
+        if(label_key_ix == label_keys.length - 1) {
+          g_time = loc_time;
+        }
+
+      }); // end loop through label_keys and plots 
+
+    }); // end process websocket buffer and msgpack object
+
+  }; // end connection.onmessage
+  console.log("***CREATED ONMESSAGE");
+
+  resizeCanvas();
+} // end startStream
+
+function resizeCanvas() {
+  for (var i = 0; i < label_keys.length; i++) {
+    // var canvs = document.getElementById("channel_" + i);
+    // var w = window.innerWidth * 0.40;
+    // var h = window.innerHeight * 0.20;
+    // if(w < 1000.0 && h < 500.0) {
+    //   canvs.width = w;
+    //   canvs.width = h;
+    //   console.log("YAY!!!!")
+    // }
+    // console.log(w)
+    // console.log(h)
+    // canvs.width = 400;
+    // canvs.height = 200;
+  }
+}
+
+
+// datetime string gen functions
+function zeroPad(nNum, nPad) {
+  return ((Math.pow(10, nPad) + nNum) + '').slice(1);
+};
+function datetimeString(dtObj) {
+  let _dtstr = "" + dtObj.getFullYear() + dtObj.getMonth() + zeroPad(dtObj.getMonth()+1, 2) + "-"
+                 + dtObj.getHours() + zeroPad(dtObj.getMinutes(), 2) + zeroPad(dtObj.getSeconds(), 2)
+  return _dtstr;
+}
+
+// JSON download functions
+function downloadObjectAsJson(exportObj, exportName){
+  var dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportObj));
+  var downloadAnchorNode = document.createElement('a');
+  downloadAnchorNode.setAttribute("href",     dataStr);
+  downloadAnchorNode.setAttribute("download", exportName + ".json");
+  document.body.appendChild(downloadAnchorNode); // required for firefox
+  downloadAnchorNode.click();
+  downloadAnchorNode.remove();
+}
+function downloadImuJson() {
+  var fname = "m5c-imu-" + dtstr;
+  console.log(fname)
+  downloadObjectAsJson(aggObj, fname);
+}
+
+function downloadBufAsBinary(exportBuf, exportName) {
+  var blob, url;
+  blob = new Blob([exportBuf], {type: 'application/octet-stream'});
+  url = window.URL.createObjectURL(blob);
+  var downloadAnchorNode = document.createElement('a');
+  downloadAnchorNode.setAttribute("href",     url);
+  downloadAnchorNode.setAttribute("download", exportName + ".bin");
+  document.body.appendChild(downloadAnchorNode);
+  downloadAnchorNode.style = 'display: none';
+  downloadAnchorNode.click();
+  downloadAnchorNode.remove();
+  setTimeout(function() {
+    return window.URL.revokeObjectURL(url);
+  }, 1000);
+};
+function downloadImuMsgPack() {
+  var fname = "m5c-imu-" + dtstr;
+  console.log(fname)
+  downloadBufAsBinary(aggBuf, fname);
+}
+
+</script>
+
+<title>M5Stick-C IMU Demo</title>
+
+</head>
+<body onload="startStream();">
+
+  <div class="w-100 mh-100 p-3" style="background-color: #eee;">
+    <div class="row">
+      <div class="col">
+        <h3>M5Stick-C IMU Demo</h3>
+        <p>
+          <li>This is a page to receive IMU data from an M5Stick-C device. 
+          <li>The M5Stick-C device contains an ESP32 microcontroller that streams IMU data with a WebSockets.
+          <li>An IMU is an Inertial Motion Unit and contains an accelerometer and a gyroscope.
+          <li>The ESP32 inside the M5Stick-C maintains a WebSocket server that supports multiple WebSocket clients - like this web page.
+          <li>For efficiency, the data is packaged up with msgpack, which is like a binary version of JSON.
+        </p>
+      
+        <p class="mdn-disclaimer">
+          This example is offered as-is for demonstration purposes only.
+        </p>
+      
+        <p>
+        <input type="button" name="start_stream" value="Reset Recording" onclick="initDataVars()">
+        <!-- <input type="button" name="resize" value="Resize Charts" onclick="resizeCanvas()"> -->
+        <input type="button" name="downloadJson" value="Download (JSON)" onclick="downloadImuJson()">
+        <input type="button" name="downloadMsgPack" value="Download (MsgPack)" onclick="downloadImuMsgPack()">
+        </p>
+      </div>
+    </div>
+  
+
+    <!-- X-ROW -->
+    <div class="row">
+      <div class="col">
+        Accelerometer-X <br><canvas id="channel_0"></canvas><br>
+      </div>
+    </div>
+
+</div>
+
+</body>
+</html>
